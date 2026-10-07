@@ -64,42 +64,49 @@ not sent to this call: it either returns the whole calendar for the flow, or the
 server-side session state set by earlier calls. It fired twice when the `slot-booking?flow=sed` page
 loaded. ### `get_availability` response shape
 
-From the capture of 2026-10-07 (two identical-shape responses). Values below are placeholders:
+From the logged-in capture of 2026-10-07 (two responses, identical content). Real structure, with the
+per-date list shortened:
 
 ```json
 {
-  "status": "<status>",
+  "status": "success",
   "result": {
     "20261007": { "avl": 0 },
     "20261008": { "avl": 0 },
-    "...": "one key per date, YYYYMMDD",
+    "...": "one key per bookable date, YYYYMMDD",
+    "20261218": { "avl": 0 },
+    "20261230": { "avl": 0 },
     "20261231": { "avl": 0 },
-    "blockedDays": [0, 0, 0, 0],
-    "enableStats": false
+    "blockedDays": [20261011, 20261015, 20261016, 20261017],
+    "enableStats": true
   },
-  "response_time": "<response_time>"
+  "response_time": "2026-10-07 12:05:19"
 }
 ```
 
-- `result` is a **date-level calendar for Special Entry Darshan**: a map of `YYYYMMDD` to `{ "avl": int }`,
-  covering 2026-10-07 to 2026-12-31 in this capture, plus two non-date keys, `blockedDays` (list of 4
-  ints) and `enableStats` (bool). Date keys and those two keys share the same object, so a parser has
-  to skip non-digit keys.
+What the capture shows:
+
+- `result` is a **date-level calendar for Special Entry Darshan**: `YYYYMMDD` → `{ "avl": int }`, from
+  today (2026-10-07) to 2026-12-31. The non-date keys `blockedDays` and `enableStats` sit in the same
+  object, so a parser has to skip non-digit keys.
+- **`blockedDays` are dates (YYYYMMDD ints)**, and they are exactly the four October dates missing from
+  the map (Oct 11, 15, 16, 17). Blocked dates are listed there instead of in the calendar.
+- **Every `avl` was `0`** for all 71 dates. Special Entry Darshan was fully booked for the whole
+  window at capture time, which matches it normally selling out within minutes of each quota release.
+  A monitor would watch for any date's `avl` going above 0 (cancellations, or a newly released month).
+- `response_time` is the server time in IST (12:05:19 IST = 06:35:19 UTC, the capture time).
 - There is **no per-slot or per-persons breakdown** in this response.
 
 Still unknown:
 
-- **What `avl` counts:** remaining tickets, remaining slots, or a status code. Compare the values with
-  the colours and counts the calendar shows for the same dates.
-- **What `blockedDays` holds:** day-of-month, weekday indices, or something else. Note that exactly
-  four October dates are absent from `result` (11, 15, 16, 17); whether those are the four
-  `blockedDays` values is a hypothesis to check, not established.
-- **Why dates are missing:** besides Oct 11 and 15–17, Dec 19–29 is absent. These may be blocked
-  days, sold out and dropped, or not yet released.
-- **Where slot data comes from:** probably a later call after a date is picked on the page (and
-  persons chosen). Capture it by clicking one date in a logged-in run and looking for the next flagged
-  request.
-- **What `enableStats` controls**, and whether `status` / `response_time` vary. Fill those into the tables in `TTD_RESEARCH.md`.
+- **What a non-zero `avl` counts** (tickets or slots). Only zeros were seen; needs a capture on a day
+  with availability, compared with what the calendar shows.
+- **Why Dec 19–29 is absent** although it is not in `blockedDays`: possibly not yet released, or
+  handled by a different quota.
+- **Where slot data comes from.** In this run the page loaded only `user/client/get_details` and two
+  `get_availability` calls; no date was clicked (every date was at 0). The slot call probably follows
+  picking a date that has availability.
+- **What `enableStats` controls.**
 
 ### What a login requirement means for monitoring
 

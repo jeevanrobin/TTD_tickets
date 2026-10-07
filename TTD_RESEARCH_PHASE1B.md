@@ -90,19 +90,32 @@ What the capture shows:
   today (2026-10-07) to 2026-12-31. The non-date keys `blockedDays` and `enableStats` sit in the same
   object, so a parser has to skip non-digit keys.
 - **`blockedDays` are dates (YYYYMMDD ints)**, and they are exactly the four October dates missing from
-  the map (Oct 11, 15, 16, 17). Blocked dates are listed there instead of in the calendar.
+  the map (Oct 11, 15, 16, 17). Blocked dates (grey on the calendar) are listed there instead of in the map.
 - **Every `avl` was `0`** for all 71 dates. Special Entry Darshan was fully booked for the whole
   window at capture time, which matches it normally selling out within minutes of each quota release.
   A monitor would watch for any date's `avl` going above 0 (cancellations, or a newly released month).
 - `response_time` is the server time in IST (12:05:19 IST = 06:35:19 UTC, the capture time).
 - There is **no per-slot or per-persons breakdown** in this response.
 
+**Mapping to the calendar** (from Jeevan's screenshot of the same logged-in page, 2026-10-07). The
+calendar legend has five states: Available (green), Quota is Full (red), Quota Not Released (blue),
+Filling Fast (yellow), Slot Not Available (grey).
+
+| Calendar state | Dates on screen | In the API response |
+|---|---|---|
+| Quota is Full (red) | Oct 7–10, 12–14, 18–31; all of Nov; Dec 1–18, 30–31 | date key present, `avl: 0` |
+| Slot Not Available (grey) | Oct 11, 15, 16, 17 | absent from the map, listed in `blockedDays` |
+| Quota Not Released (blue) | Dec 19–29 | **absent from the map and not in `blockedDays`** |
+| Available (green) / Filling Fast (yellow) | none on screen | not yet observed; presumably `avl > 0` |
+
+So when a quota is released, the blue dates should appear in `result` with `avl > 0` (green, or yellow
+as they run low) and drop to `avl: 0` (red) once sold out. Two detectable events: **a new date key
+appears**, or **an existing date's `avl` rises above 0** (cancellations).
+
 Still unknown:
 
 - **What a non-zero `avl` counts** (tickets or slots). Only zeros were seen; needs a capture on a day
   with availability, compared with what the calendar shows.
-- **Why Dec 19–29 is absent** although it is not in `blockedDays`: possibly not yet released, or
-  handled by a different quota.
 - **Where slot data comes from.** In this run the page loaded only `user/client/get_details` and two
   `get_availability` calls; no date was clicked (every date was at 0). The slot call probably follows
   picking a date that has availability.

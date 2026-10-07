@@ -42,6 +42,9 @@ MAX_BODY_BYTES = 200_000
 DROP_HEADERS = {"cookie", "set-cookie", "authorization", "x-auth-token", "x-csrf-token", "x-xsrf-token"}
 # Also drop any custom header that looks like it carries a token, key or session (e.g. a gatekeeper token).
 SENSITIVE_HEADER = re.compile(r"(token|auth|session|cookie|csrf|xsrf|signature|secret|api-?key|gatekeeper)", re.IGNORECASE)
+# ...and any header that identifies the user or device (e.g. TTD's `userid`). `user-agent` is kept.
+IDENTITY_HEADER = re.compile(r"(user|uid|client-?id|customer|cust-?id|account|mobile|phone|email|device|imei|login)", re.IGNORECASE)
+KEEP_HEADERS = {"user-agent"}
 # Keys whose values are replaced before anything is written to disk.
 PII_KEY = re.compile(
     r"(name|mobile|phone|email|mail|aadhaar|aadhar|aadh|idproof|id_number|pan|passport|voter|address|"
@@ -87,7 +90,12 @@ def sanitize_url(url):
 
 
 def clean_headers(headers):
-    return {k: v for k, v in headers.items() if k.lower() not in DROP_HEADERS and not SENSITIVE_HEADER.search(k)}
+    return {
+        k: v
+        for k, v in headers.items()
+        if k.lower() in KEEP_HEADERS
+        or (k.lower() not in DROP_HEADERS and not SENSITIVE_HEADER.search(k) and not IDENTITY_HEADER.search(k))
+    }
 
 
 def safe_name(index, url):

@@ -17,7 +17,9 @@ Tool: [`poc/research_interactive.py`](poc/research_interactive.py)
   book, pay, decrypt configuration, or reuse/replay gatekeeper tokens.
 - No cookies or browser storage are saved (fresh browser profile, nothing persisted). Request
   headers that look like credentials are dropped: `cookie`, `authorization`, and any header whose
-  name contains token, auth, session, csrf, xsrf, signature, secret, api-key or gatekeeper.
+  name contains token, auth, session, csrf, xsrf, signature, secret, api-key or gatekeeper, or identifies
+  the user or device (user, uid, client-id, customer, account, mobile, phone, email, device; e.g. TTD's
+  `userid` header). `user-agent` is kept.
 - Request and response bodies of **sensitive endpoints are never saved**: any path containing login,
   logout, otp, session, auth, user, profile, account, payment, captcha or gatekeeper. That covers
   `initiate_login_after_checks`, `session/complete/using_mobileno_n_otp` and `user/client/get_details`.
@@ -56,8 +58,12 @@ to the login page; the call happens only on the logged-in `slot-booking` page. (
 rejects anonymous requests is inferred from the flow, not tested, and should not be tested by
 replaying it.)
 
-Still to document from the redacted capture: its query parameters (service/flow, date or month,
-persons, slot) and the response shape. Fill those into the tables in `TTD_RESEARCH.md`.
+Observed request: `GET` with **no query string and no body**; the only non-standard request header
+is `userid` (the account id, now dropped by the recorder). So the service/date/persons selection is
+not sent to this call: it either returns the whole calendar for the flow, or the selection lives in
+server-side session state set by earlier calls. It fired twice when the `slot-booking?flow=sed` page
+loaded. Still to document from the redacted capture: the response shape (dates, slots, counts) and
+where persons/time slot are chosen. Fill those into the tables in `TTD_RESEARCH.md`.
 
 ### What a login requirement means for monitoring
 

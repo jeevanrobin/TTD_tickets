@@ -29,7 +29,7 @@ import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
@@ -42,20 +42,48 @@ MAX_BODY_BYTES = 200_000
 DROP_HEADERS = {"cookie", "set-cookie", "authorization", "x-auth-token", "x-csrf-token", "x-xsrf-token"}
 # Also drop any custom header that looks like it carries a token, key or session (e.g. a gatekeeper token).
 SENSITIVE_HEADER = re.compile(r"(token|auth|session|cookie|csrf|xsrf|signature|secret|api-?key|gatekeeper)", re.IGNORECASE)
-# Keys whose values are replaced before a response body is written to disk.
+# Keys whose values are replaced before anything is written to disk.
 PII_KEY = re.compile(
-    r"(name|mobile|phone|email|mail|aadhaar|aadhar|idproof|id_number|pan|passport|address|dob|"
-    r"birth|gender|age|token|otp|password|session|user)",
+    r"(name|mobile|phone|email|mail|aadhaar|aadhar|aadh|idproof|id_number|pan|passport|voter|address|"
+    r"dob|birth|gender|age|photo|pincode|zip|district|city|token|otp|password|passwd|session|user|"
+    r"msisdn|contact|login|identifier|credential|secret|auth|jwt|bearer|cookie|captcha|device|imei|"
+    r"fingerprint|uuid|client_?id|cust|pilgrim|card|ip_?addr)",
     re.IGNORECASE,
 )
+# Values that look personal or secret are replaced whatever key they sit under.
+PII_VALUE = re.compile(
+    r"^\s*(\+?91[\s-]?)?[6-9]\d{9}\s*$"                      # Indian mobile number
+    r"|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"            # email address
+    r"|^\s*\d{4}\s?\d{4}\s?\d{4}\s*$"                          # Aadhaar-like 12 digits
+    r"|^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$"       # JWT
+)
+
+
+# Endpoints whose request and response bodies are never saved (login, OTP, session, user profile, payment, gatekeeper).
+SENSITIVE_PATH = re.compile(r"(login|logout|otp|session|auth|user|profile|account|payment|captcha|gatekeeper)", re.IGNORECASE)
+
+
+def is_sensitive_endpoint(url):
+    return bool(SENSITIVE_PATH.search(urlsplit(url).path))
 
 
 def redact(value):
     if isinstance(value, dict):
-        return {k: ("<redacted>" if PII_KEY.search(k) else redact(v)) for k, v in value.items()}
+        return {k: ("<redacted>" if PII_KEY.search(str(k)) else redact(v)) for k, v in value.items()}
     if isinstance(value, list):
         return [redact(v) for v in value]
+    if isinstance(value, (str, int)) and not isinstance(value, bool) and PII_VALUE.search(str(value)):
+        return "<redacted>"
     return value
+
+
+def sanitize_url(url):
+    """Return the URL with its query string redacted, so personal values never reach disk or the terminal."""
+    parts = urlsplit(url)
+    if not parts.query:
+        return url
+    query = redact(parse_qs(parts.query, keep_blank_values=True))
+    return urlunsplit(parts._replace(query=urlencode(query, doseq=True, safe="[]*$,")))
 
 
 def clean_headers(headers):
@@ -91,7 +119,7 @@ def main():
             parts = urlsplit(request.url)
             record = {
                 "method": request.method,
-                "url": request.url,
+                "url": sanitize_url(request.url),
                 "host": parts.netloc,
                 "path": parts.path,
                 "query": redact(parse_qs(parts.query)),
@@ -101,12 +129,16 @@ def main():
                 "request_headers": clean_headers(request.headers),
                 "json_body_captured": False,
             }
-            if request.post_data:
+            if request.post_data and is_sensitive_endpoint(request.url):
+                record["post_data"] = "<sensitive endpoint, body not saved>"
+            elif request.post_data:
                 try:
                     record["post_data"] = redact(json.loads(request.post_data))
                 except (ValueError, TypeError):
                     record["post_data"] = "<non-JSON body omitted>"
-            if request.resource_type in API_TYPES and "json" in ctype:
+            if request.resource_type in API_TYPES and "json" in ctype and is_sensitive_endpoint(request.url):
+                record["body_note"] = "sensitive endpoint (login/OTP/session/user/gatekeeper), body not saved"
+            elif request.resource_type in API_TYPES and "json" in ctype:
                 try:
                     body = response.body()
                     if len(body) <= MAX_BODY_BYTES:
@@ -121,10 +153,10 @@ def main():
                     record["body_note"] = f"body not captured: {type(exc).__name__}"
             records.append(record)
         except Exception as exc:  # one bad response must not lose the rest of the run
-            failures.append({"method": "?", "url": getattr(response, "url", "?"), "error": f"recorder error: {exc!r}"})
+            failures.append({"method": "?", "url": sanitize_url(getattr(response, "url", "?")), "error": f"recorder error: {exc!r}"})
 
     def on_failed(request):
-        failures.append({"method": request.method, "url": request.url, "error": request.failure})
+        failures.append({"method": request.method, "url": sanitize_url(request.url), "error": request.failure})
 
     def safe_close(label, closer):
         """Close a Playwright object, recording (not raising) any error."""

@@ -17,15 +17,20 @@ Tool: [`poc/research_interactive.py`](poc/research_interactive.py)
   book, pay, decrypt configuration, or reuse/replay gatekeeper tokens.
 - No cookies or browser storage are saved (fresh browser profile, nothing persisted). Request
   headers that look like credentials are dropped: `cookie`, `authorization`, and any header whose
-  name contains token, auth, session, csrf, xsrf, signature, secret, api-key or gatekeeper. JSON bodies,
-  query strings and form/JSON POST bodies go through the same PII-key redaction as
-  `record_network.py` (name, mobile, email, Aadhaar, token, OTP, etc. become `<redacted>`).
-- Screenshots capture whatever is on screen. If you ever log in, run with `--no-screenshots` or delete
-  the screenshots afterwards, and do not share them.
+  name contains token, auth, session, csrf, xsrf, signature, secret, api-key or gatekeeper.
+- Request and response bodies of **sensitive endpoints are never saved**: any path containing login,
+  logout, otp, session, auth, user, profile, account, payment, captcha or gatekeeper. That covers
+  `initiate_login_after_checks`, `session/complete/using_mobileno_n_otp` and `user/client/get_details`.
+- Everything else (JSON bodies, query strings, form/JSON POST bodies, and the query part of every URL
+  printed or saved) goes through the shared redaction in `record_network.py`: PII-like keys (name,
+  mobile, email, Aadhaar, token, OTP, login, contact, ...) become `<redacted>`, and so does any value
+  that looks like a mobile number, email address, 12-digit Aadhaar number or JWT, whatever its key.
+- Screenshots capture whatever is on screen, including your name or number once logged in. If you log
+  in, run with `--no-screenshots` or delete the screenshots afterwards, and do not share them.
 
 ## Observed flow (run of 2026-10-07)
 
-From Jeevan's manual run with `research_interactive.py`, without logging in:
+From Jeevan's manual runs with `research_interactive.py`:
 
 1. `ttdevasthanams.ap.gov.in/` loads the Next.js app: `meta.json`, `darshan/config/app_config.json`
    (application config; its content is encrypted and is not to be decrypted), CSS.
@@ -38,10 +43,48 @@ From Jeevan's manual run with `research_interactive.py`, without logging in:
    `GET /content/Timer.json`, `POST /common/serviceAndRequestTypeIds`, `POST /common/isDonorFlag`.
 4. It then lands on `#/userLogin` (`GET /content/login.json`): the mobile + OTP login page.
 
-**Finding (inferred, not yet proven):** no date, slot or quota request was seen before the login page,
-so Darshan/Seva availability appears to sit **behind the OTP login** on `tirupatibalaji.ap.gov.in`.
-Under this project's rules (no login or OTP automation) it cannot be read by an automated monitor.
-Still worth checking before concluding:
+5. Jeevan then **logged in manually** (mobile + OTP typed by hand; the script did not interact). The
+   login itself runs on the portal API: `POST /api/sdn/rest/v1/initiate_login_after_checks`, then
+   `POST /api/sdn/rest/v1/session/complete/using_mobileno_n_otp`.
+6. The browser returns to `ttdevasthanams.ap.gov.in/slot-booking?flow=sed&flowIdentifier=sed`
+   (Special Entry Darshan), which calls `GET /api/sdn/rest/v1/user/client/get_details` and then
+   **`GET /api/sdn/rest/v1/slot/get_availability`**.
+
+**Confirmed: availability is served by `GET https://ttdevasthanams.ap.gov.in/api/sdn/rest/v1/slot/get_availability`,
+and it is only reached after OTP login.** Opening Special Entry Darshan without a session sends you
+to the login page; the call happens only on the logged-in `slot-booking` page. (That the API itself
+rejects anonymous requests is inferred from the flow, not tested, and should not be tested by
+replaying it.)
+
+Still to document from the redacted capture: its query parameters (service/flow, date or month,
+persons, slot) and the response shape. Fill those into the tables in `TTD_RESEARCH.md`.
+
+### What a login requirement means for monitoring
+
+The project rules exclude automating login or OTP, and storing cookies or auth headers. With a
+login-gated availability API that rules out:
+
+- a headless bot that logs in on a schedule;
+- copying a session cookie/token out of the browser and calling `get_availability` from a script
+  (that stores and replays auth material, and is likely against TTD's terms);
+- keeping a logged-in browser open and auto-refreshing it indefinitely (automated authenticated
+  traffic on a personal account, and sessions expire anyway).
+
+What remains possible:
+
+1. **Public-signal notifier (recommended for Phase 2).** Watch unauthenticated sources for changes
+   that precede availability: CMS `universal-latest-updates` and `daily-schedules`, the
+   `tirupatibalaji` `Timer.json` / `getTimerProperties` booking-window data, and quota-release
+   announcements. Notify "booking window opened / new quota announced", then the person logs in and
+   checks themselves.
+2. **Assisted "check now" session.** The person starts the visible browser, logs in by hand, opens
+   Special Entry Darshan, and the tool passively reads the `get_availability` response that page
+   loads and summarises it (dates, slots, counts). No stored session, no polling; one check per
+   human login. Useful for reading the calendar faster, not for unattended alerts.
+
+Unattended slot-count alerts are not achievable within these rules.
+
+Earlier checks that are still worth doing for option 1:
 
 - the redacted bodies of `getTimerProperties`, `Timer.json` and `serviceAndRequestTypeIds` (they may
   hold release times or service IDs, which is public schedule information, not availability);
@@ -49,8 +92,6 @@ Still worth checking before concluding:
   without login;
 - whether `cms/api/daily-schedules` or `universal-latest-updates` announce quota release dates.
 
-If none of those carry availability, the realistic Phase 2 is a notifier for public signals
-(release announcements, timer/booking-window changes), not slot counts.
 
 ## Procedure
 

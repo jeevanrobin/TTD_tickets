@@ -34,7 +34,7 @@ from urllib.parse import parse_qs, urlsplit
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
-from record_network import API_TYPES, BASE_URL, MAX_BODY_BYTES, clean_headers, redact, safe_name
+from record_network import API_TYPES, BASE_URL, MAX_BODY_BYTES, clean_headers, is_sensitive_endpoint, redact, safe_name, sanitize_url
 
 # Official TTD hosts. The booking flow hands off from the portal to tirupatibalaji.ap.gov.in for login.
 TTD_HOSTS = (urlsplit(BASE_URL).netloc, "tirupatibalaji.ap.gov.in")
@@ -69,6 +69,8 @@ def sanitize_post(request):
     raw = request.post_data
     if not raw:
         return None
+    if is_sensitive_endpoint(request.url):
+        return "<sensitive endpoint, body not saved>"
     try:
         return redact(json.loads(raw))
     except (ValueError, TypeError):
@@ -112,7 +114,7 @@ class Recorder:
                 "time": now(),
                 "event": "response",
                 "method": request.method,
-                "url": request.url,
+                "url": sanitize_url(request.url),
                 "host": parts.netloc,
                 "path": parts.path,
                 "query": redact(parse_qs(parts.query)),
@@ -129,6 +131,8 @@ class Recorder:
             if request.resource_type in API_TYPES and "json" in ctype:
                 if not is_ttd(request.url):
                     record["body_note"] = "third-party host, body not saved"
+                elif is_sensitive_endpoint(request.url):
+                    record["body_note"] = "sensitive endpoint (login/OTP/session/user/gatekeeper), body not saved"
                 else:
                     try:
                         body = response.body()
@@ -149,12 +153,12 @@ class Recorder:
             if request.resource_type in API_TYPES:
                 self.print_if_new(record)
         except Exception as exc:  # one bad response must not lose the rest of the run
-            self.failures.append({"method": "?", "url": getattr(response, "url", "?"), "error": f"recorder error: {exc!r}"})
+            self.failures.append({"method": "?", "url": sanitize_url(getattr(response, "url", "?")), "error": f"recorder error: {exc!r}"})
 
     def on_failed(self, request):
         if request.resource_type not in RECORDED_TYPES:
             return
-        failure = {"time": now(), "method": request.method, "url": request.url, "error": request.failure}
+        failure = {"time": now(), "method": request.method, "url": sanitize_url(request.url), "error": request.failure}
         self.failures.append(failure)
         self.write({"event": "failed", **failure})
 
@@ -162,10 +166,10 @@ class Recorder:
         if frame != page.main_frame:
             return
         url = frame.url
-        nav = {"time": now(), "event": "navigation", "url": url, "flags": flags_for(url)}
+        nav = {"time": now(), "event": "navigation", "url": sanitize_url(url), "flags": flags_for(url)}
         self.navigations.append(nav)
         self.write(nav)
-        print(f"\n== NAV  {url}")
+        print(f"\n== NAV  {nav['url']}")
         if not is_ttd(url) and url != "about:blank":
             print("   !! This page is not on an official TTD host. Recording continues; do not enter personal or payment details.")
         with self.lock:
@@ -195,7 +199,7 @@ class Recorder:
             try:
                 page.screenshot(path=str(screenshots_dir / f"{label}.png"), full_page=True)
             except PlaywrightError as exc:
-                self.failures.append({"method": "-", "url": page.url, "error": f"screenshot failed: {exc.message.splitlines()[0]}"})
+                self.failures.append({"method": "-", "url": sanitize_url(page.url), "error": f"screenshot failed: {exc.message.splitlines()[0]}"})
 
 
 def wait_for_enter(stop):

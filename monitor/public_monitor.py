@@ -21,6 +21,7 @@ Usage:
     python public_monitor.py --once          # one check (the first run just records a baseline)
     python public_monitor.py                 # check every 30 minutes until Ctrl-C
     python public_monitor.py --interval 60   # every 60 minutes (minimum 10)
+    python public_monitor.py --ntfy-topic <your-topic>   # also send alerts to your phone (ntfy app)
 """
 
 import argparse
@@ -34,6 +35,8 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+import urllib.error
+import urllib.request
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
@@ -159,6 +162,27 @@ def save_state(state):
     STATE_FILE.write_text(json.dumps(state, indent=1, ensure_ascii=False), encoding="utf-8")
 
 
+# Phone notifications via ntfy (https://ntfy.sh): set TTD_NTFY_TOPIC or pass --ntfy-topic.
+NTFY_SERVER = os.environ.get("TTD_NTFY_SERVER", "https://ntfy.sh")
+ntfy_topic = os.environ.get("TTD_NTFY_TOPIC", "")
+
+
+def push(title, message, important=False):
+    """Send a phone notification through ntfy. Failures are printed, never raised."""
+    if not ntfy_topic:
+        return
+    req = urllib.request.Request(
+        f"{NTFY_SERVER.rstrip('/')}/{ntfy_topic}",
+        data=message[:3500].encode("utf-8"),
+        headers={"Title": title, "Priority": "high" if important else "default", "Tags": "warning" if important else "bell"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=15).close()
+    except (urllib.error.URLError, OSError) as exc:
+        print(f"Phone notification failed: {exc}")
+
+
 def alert(lines):
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     block = "\n".join([f"[{stamp}]", *lines, ""])
@@ -166,6 +190,8 @@ def alert(lines):
     ALERT_LOG.parent.mkdir(exist_ok=True)
     with ALERT_LOG.open("a", encoding="utf-8") as fh:
         fh.write(block + "\n")
+    important = any(line.startswith("IMPORTANT") for line in lines)
+    push("TTD: IMPORTANT update" if important else "TTD: site update", "\n".join(lines), important)
 
 
 def short(s, n=300):
@@ -219,7 +245,21 @@ def main():
     parser.add_argument("--once", action="store_true", help="run a single check and exit")
     parser.add_argument("--interval", type=float, default=30, help=f"minutes between checks (default 30, minimum {MIN_INTERVAL})")
     parser.add_argument("--headed", action="store_true", help="show the browser")
+    parser.add_argument("--ntfy-topic", help="ntfy topic for phone alerts (or set TTD_NTFY_TOPIC)")
+    parser.add_argument("--test-alert", action="store_true", help="send a test phone notification and exit")
     args = parser.parse_args()
+
+    global ntfy_topic
+    ntfy_topic = args.ntfy_topic or ntfy_topic
+    if args.test_alert:
+        if not ntfy_topic:
+            print("Set TTD_NTFY_TOPIC or pass --ntfy-topic first.")
+            return 1
+        push("TTD monitor test", "Phone alerts are working.")
+        print(f"Test notification sent to topic {ntfy_topic!r}.")
+        return 0
+    if ntfy_topic:
+        print(f"Phone alerts on: ntfy topic {ntfy_topic!r}")
 
     if args.once:
         return 0 if run_once(args.headed) else 1

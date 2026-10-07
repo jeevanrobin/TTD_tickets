@@ -26,6 +26,22 @@ Alerts print in the terminal (with a bell) and are appended to `monitor/state/al
 seen text is kept in `monitor/state/public_monitor.json` (public content only; the folder is
 git-ignored).
 
+## Alerts on your phone (ntfy)
+
+1. Install the free **ntfy** app (Android: Play Store / F-Droid, iPhone: App Store). No account needed.
+2. In the app, tap **+** and subscribe to a topic name that nobody can guess, e.g.
+   `ttd-jeevan-7f3k9q2x`. Anyone who knows the name can read it, so keep it random.
+3. On the PC, send a test, then start the monitor with the same topic:
+
+```powershell
+python public_monitor.py --ntfy-topic ttd-jeevan-7f3k9q2x --test-alert
+python public_monitor.py --ntfy-topic ttd-jeevan-7f3k9q2x
+```
+
+Or set it once: `setx TTD_NTFY_TOPIC ttd-jeevan-7f3k9q2x` (open a new terminal afterwards) and run
+`python public_monitor.py`. IMPORTANT changes arrive as high-priority notifications. Alert text is
+public TTD content only. The PC must stay on and running the monitor.
+
 ## How it behaves
 
 - Each check opens the two official sites (portal home, and the legacy site's public pre-login
@@ -44,4 +60,4 @@ git-ignored).
 
 ## Not included yet
 
-Telegram or other notifications, and anything that reads `get_availability` (login-gated).
+Telegram, and anything that reads `get_availability` (login-gated).

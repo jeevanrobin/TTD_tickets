@@ -9,9 +9,10 @@ Tool: [`poc/research_interactive.py`](poc/research_interactive.py)
 
 ## Ground rules
 
-- Official site only: `https://ttdevasthanams.ap.gov.in/`. The script warns in the terminal if the
-  main page leaves that host (for example, to a payment gateway) and never saves JSON bodies from
-  other hosts.
+- Official TTD hosts only: `https://ttdevasthanams.ap.gov.in/` (portal) and
+  `https://tirupatibalaji.ap.gov.in/` (where the booking flow hands off for login). The script warns in
+  the terminal if the main page leaves these hosts (for example, to a payment gateway) and never saves
+  JSON bodies or flags URLs from other hosts.
 - You click; the script only listens. It does not click, type, log in, enter OTPs, solve CAPTCHAs,
   book, pay, decrypt configuration, or reuse/replay gatekeeper tokens.
 - No cookies or browser storage are saved (fresh browser profile, nothing persisted). Request
@@ -21,6 +22,35 @@ Tool: [`poc/research_interactive.py`](poc/research_interactive.py)
   `record_network.py` (name, mobile, email, Aadhaar, token, OTP, etc. become `<redacted>`).
 - Screenshots capture whatever is on screen. If you ever log in, run with `--no-screenshots` or delete
   the screenshots afterwards, and do not share them.
+
+## Observed flow (run of 2026-10-07)
+
+From Jeevan's manual run with `research_interactive.py`, without logging in:
+
+1. `ttdevasthanams.ap.gov.in/` loads the Next.js app: `meta.json`, `darshan/config/app_config.json`
+   (application config; its content is encrypted and is not to be decrypted), CSS.
+2. `/home/dashboard`: `POST /api/gatekeeper/verify` (200), then Strapi-style CMS calls under
+   `/cms/api/...` (`universal-headers`, `universal-sevas`, `daily-schedules`, `universal-latest-updates`,
+   banners, footers; `notifications` returns 404). These are content, not availability.
+3. Choosing a booking service hands off to **`tirupatibalaji.ap.gov.in`**, an older AngularJS app
+   (hash routes, XHR): `GET /common/getAllCountryDetails`, HTML templates, then
+   `#/loginTimer` with `POST /common/activeEnv`, `POST /common/getTimerProperties`,
+   `GET /content/Timer.json`, `POST /common/serviceAndRequestTypeIds`, `POST /common/isDonorFlag`.
+4. It then lands on `#/userLogin` (`GET /content/login.json`): the mobile + OTP login page.
+
+**Finding (inferred, not yet proven):** no date, slot or quota request was seen before the login page,
+so Darshan/Seva availability appears to sit **behind the OTP login** on `tirupatibalaji.ap.gov.in`.
+Under this project's rules (no login or OTP automation) it cannot be read by an automated monitor.
+Still worth checking before concluding:
+
+- the redacted bodies of `getTimerProperties`, `Timer.json` and `serviceAndRequestTypeIds` (they may
+  hold release times or service IDs, which is public schedule information, not availability);
+- whether any public page on either host shows a quota calendar or "booking open/closed" status
+  without login;
+- whether `cms/api/daily-schedules` or `universal-latest-updates` announce quota release dates.
+
+If none of those carry availability, the realistic Phase 2 is a notifier for public signals
+(release announcements, timer/booking-window changes), not slot counts.
 
 ## Procedure
 
@@ -42,7 +72,7 @@ python research_interactive.py
 5. Watch the terminal. Each new XHR/fetch endpoint is printed once; URLs containing any of
    `availability, slot, quota, darshan, seva, booking, capacity, inventory, schedule, timeslot,
    calendar, date` in the path or a query parameter name are marked `<-- FLAG`. Only URLs on the
-   TTD host are flagged, so analytics beacons (which carry the page title in their query) are not. Each page navigation prints `== NAV`.
+   official TTD hosts are flagged, so analytics beacons (which carry the page title in their query) are not. Each page navigation prints `== NAV`.
 6. Press **Enter** in the terminal to stop. Output is written to
    `output/interactive_<timestamp>/` even if the browser crashes on shutdown.
 7. Keep a short note of what you clicked and when; the timestamps in `requests.jsonl` and
@@ -53,7 +83,7 @@ python research_interactive.py
 | File | Contents |
 |---|---|
 | `requests.jsonl` | One JSON line per navigation, XHR, fetch or document response, written live: time, method, full URL, parsed query, sanitized POST body, status, content type, flags, whether the JSON body was saved |
-| `responses/` | Redacted JSON bodies from the TTD host (up to 200 KB each) |
+| `responses/` | Redacted JSON bodies from the official TTD hosts (up to 200 KB each) |
 | `screenshots/` | One per main-page navigation (taken about 2 s later) plus `final_*.png` |
 | `summary.txt` | Navigations, the flagged XHR/fetch list, then every XHR/fetch with query, POST body and capture status, failures, shutdown errors |
 

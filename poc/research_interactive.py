@@ -15,7 +15,7 @@ Usage:
 
 Output (in ./output/interactive_<timestamp>/):
     requests.jsonl     one line per navigation / XHR / fetch, written as it happens
-    responses/         JSON bodies from the TTD host, PII-like keys redacted
+    responses/         JSON bodies from the official TTD hosts, PII-like keys redacted
     screenshots/       one screenshot after each main-page navigation, plus a final one
     summary.txt        navigations, flagged URLs, then every XHR/fetch request
 """
@@ -36,7 +36,8 @@ from playwright.sync_api import sync_playwright
 
 from record_network import API_TYPES, BASE_URL, MAX_BODY_BYTES, clean_headers, redact, safe_name
 
-TTD_HOST = urlsplit(BASE_URL).netloc
+# Official TTD hosts. The booking flow hands off from the portal to tirupatibalaji.ap.gov.in for login.
+TTD_HOSTS = (urlsplit(BASE_URL).netloc, "tirupatibalaji.ap.gov.in")
 RECORDED_TYPES = API_TYPES | {"document"}
 FLAG_TERMS = (
     "availability", "slot", "quota", "darshan", "seva", "booking", "capacity",
@@ -48,13 +49,13 @@ SCREENSHOT_DELAY = 2.0  # seconds after a navigation before the screenshot
 
 def is_ttd(url):
     host = urlsplit(url).netloc
-    return host == TTD_HOST or host.endswith("." + TTD_HOST)
+    return any(host == h or host.endswith("." + h) for h in TTD_HOSTS)
 
 
 def flags_for(url):
     """Flag terms in the path or query parameter names of TTD-host URLs only.
 
-    Query values and third-party hosts are ignored, so analytics beacons that carry the
+    Query values and non-TTD hosts are ignored, so analytics beacons that carry the
     page title or URL in their query string are not flagged.
     """
     if not is_ttd(url):
@@ -166,7 +167,7 @@ class Recorder:
         self.write(nav)
         print(f"\n== NAV  {url}")
         if not is_ttd(url) and url != "about:blank":
-            print("   !! This page is not on the official TTD host. Recording continues; do not enter personal or payment details.")
+            print("   !! This page is not on an official TTD host. Recording continues; do not enter personal or payment details.")
         with self.lock:
             label = f"{len(self.navigations):03d}_{urlsplit(url).path.strip('/').replace('/', '_') or 'home'}"
             self.pending_screenshots.append((time.monotonic() + SCREENSHOT_DELAY, page, label))

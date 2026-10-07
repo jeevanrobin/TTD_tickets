@@ -40,7 +40,8 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 PORTAL = "https://ttdevasthanams.ap.gov.in/"
-LEGACY = "https://tirupatibalaji.ap.gov.in/"
+# The public pre-login page of the legacy booking site; it loads the booking-window timer.
+LEGACY = "https://tirupatibalaji.ap.gov.in/#/loginTimer"
 
 # (label, host, path) of the public responses to watch.
 WATCHED = [
@@ -111,9 +112,16 @@ def check(headed=False):
             problems.append(f"{label}: HTTP {response.status}")
             return
         try:
-            snapshot[label] = sorted(texts(response.json()))
-        except (PlaywrightError, ValueError):
-            problems.append(f"{label}: response was not JSON")
+            body = response.text()
+        except PlaywrightError:
+            problems.append(f"{label}: body could not be read")
+            return
+        try:
+            snapshot[label] = sorted(texts(json.loads(body)))
+        except ValueError:
+            # Not JSON (plain text or an encoded blob): track it as one value, by hash if it is long.
+            body = body.strip()
+            snapshot[label] = [body if len(body) <= 500 else f"<{len(body)} chars, sha256 {hashlib.sha256(body.encode()).hexdigest()[:16]}>"]
 
     pw = sync_playwright().start()
     browser = None
@@ -125,7 +133,7 @@ def check(headed=False):
         for url in (PORTAL, LEGACY):
             try:
                 page.goto(url, wait_until="networkidle", timeout=60_000)
-                page.wait_for_timeout(5_000)
+                page.wait_for_timeout(8_000)
             except PlaywrightError as exc:
                 problems.append(f"{url}: {exc.message.splitlines()[0]}")
     except PlaywrightError as exc:

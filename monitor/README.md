@@ -5,7 +5,7 @@ project does not automate login. Until a green-date capture shows what a non-zer
 monitor watches the **public** signals that come before availability:
 
 - portal CMS: latest updates, daily schedules, sevas, banners, carousels
-- legacy booking site: booking timer (`Timer.json`, `getTimerProperties`) and its latest updates
+- legacy booking site (its public `#/loginTimer` page): booking timer (`Timer.json`, `getTimerProperties`) and its latest updates
 
 It alerts when their text changes, and marks changes that mention Special Entry Darshan, SED, 300,
 quota, release, slot or online booking as **IMPORTANT** (a quota-release announcement, a
@@ -28,7 +28,8 @@ git-ignored).
 
 ## How it behaves
 
-- Each check opens the two official sites in a fresh headless Chromium and lets the pages make their
+- Each check opens the two official sites (portal home, and the legacy site's public pre-login
+  timer page) in a fresh headless Chromium and lets the pages make their
   normal requests; it reads the responses the pages already fetch. It does not call TTD APIs directly,
   log in, click, fill forms, or keep cookies between checks.
 - Default interval 30 minutes with ±20% jitter; minimum 10 minutes.
@@ -37,8 +38,9 @@ git-ignored).
 - Timestamps and IDs (`updatedAt`, `publishedAt`, `id`, ...) are ignored so republishing the same
   text does not alert.
 - "Not seen this time" lists sources the pages did not request on that check. If a source is never
-  seen (for example the legacy timer, if that site needs a click to load it), it simply isn't
-  monitored.
+  seen it simply isn't monitored.
+- Responses that are not JSON (e.g. `getTimerProperties`) are tracked as text, or by hash if long, so
+  any change still alerts but the content is not shown.
 
 ## Not included yet
 

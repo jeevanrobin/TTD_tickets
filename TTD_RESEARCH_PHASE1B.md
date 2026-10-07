@@ -41,7 +41,8 @@ python research_interactive.py
    it means availability is behind authentication.
 5. Watch the terminal. Each new XHR/fetch endpoint is printed once; URLs containing any of
    `availability, slot, quota, darshan, seva, booking, capacity, inventory, schedule, timeslot,
-   calendar, date` are marked `<-- FLAG`. Each page navigation prints `== NAV`.
+   calendar, date` in the path or a query parameter name are marked `<-- FLAG`. Only URLs on the
+   TTD host are flagged, so analytics beacons (which carry the page title in their query) are not. Each page navigation prints `== NAV`.
 6. Press **Enter** in the terminal to stop. Output is written to
    `output/interactive_<timestamp>/` even if the browser crashes on shutdown.
 7. Keep a short note of what you clicked and when; the timestamps in `requests.jsonl` and

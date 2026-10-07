@@ -52,7 +52,16 @@ def is_ttd(url):
 
 
 def flags_for(url):
-    return sorted({m.group(0).lower() for m in FLAG_RE.finditer(url)})
+    """Flag terms in the path or query parameter names of TTD-host URLs only.
+
+    Query values and third-party hosts are ignored, so analytics beacons that carry the
+    page title or URL in their query string are not flagged.
+    """
+    if not is_ttd(url):
+        return []
+    parts = urlsplit(url)
+    target = " ".join([parts.path, *parse_qs(parts.query, keep_blank_values=True).keys()])
+    return sorted({m.group(0).lower() for m in FLAG_RE.finditer(target)})
 
 
 def sanitize_post(request):

@@ -62,8 +62,44 @@ Observed request: `GET` with **no query string and no body**; the only non-stand
 is `userid` (the account id, now dropped by the recorder). So the service/date/persons selection is
 not sent to this call: it either returns the whole calendar for the flow, or the selection lives in
 server-side session state set by earlier calls. It fired twice when the `slot-booking?flow=sed` page
-loaded. Still to document from the redacted capture: the response shape (dates, slots, counts) and
-where persons/time slot are chosen. Fill those into the tables in `TTD_RESEARCH.md`.
+loaded. ### `get_availability` response shape
+
+From the capture of 2026-10-07 (two identical-shape responses). Values below are placeholders:
+
+```json
+{
+  "status": "<status>",
+  "result": {
+    "20261007": { "avl": 0 },
+    "20261008": { "avl": 0 },
+    "...": "one key per date, YYYYMMDD",
+    "20261231": { "avl": 0 },
+    "blockedDays": [0, 0, 0, 0],
+    "enableStats": false
+  },
+  "response_time": "<response_time>"
+}
+```
+
+- `result` is a **date-level calendar for Special Entry Darshan**: a map of `YYYYMMDD` to `{ "avl": int }`,
+  covering 2026-10-07 to 2026-12-31 in this capture, plus two non-date keys, `blockedDays` (list of 4
+  ints) and `enableStats` (bool). Date keys and those two keys share the same object, so a parser has
+  to skip non-digit keys.
+- There is **no per-slot or per-persons breakdown** in this response.
+
+Still unknown:
+
+- **What `avl` counts:** remaining tickets, remaining slots, or a status code. Compare the values with
+  the colours and counts the calendar shows for the same dates.
+- **What `blockedDays` holds:** day-of-month, weekday indices, or something else. Note that exactly
+  four October dates are absent from `result` (11, 15, 16, 17); whether those are the four
+  `blockedDays` values is a hypothesis to check, not established.
+- **Why dates are missing:** besides Oct 11 and 15–17, Dec 19–29 is absent. These may be blocked
+  days, sold out and dropped, or not yet released.
+- **Where slot data comes from:** probably a later call after a date is picked on the page (and
+  persons chosen). Capture it by clicking one date in a logged-in run and looking for the next flagged
+  request.
+- **What `enableStats` controls**, and whether `status` / `response_time` vary. Fill those into the tables in `TTD_RESEARCH.md`.
 
 ### What a login requirement means for monitoring
 

@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
+    inputs:
+      test_alert:
+        description: "Only send a test notification to the phone"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,7 +42,14 @@ jobs:
           key: monitor-state-${{ github.run_id }}
           restore-keys: monitor-state-
 
+      - name: Send test notification
+        if: inputs.test_alert
+        env:
+          TTD_NTFY_TOPIC: ${{ secrets.TTD_NTFY_TOPIC }}
+        run: python monitor/public_monitor.py --test-alert
+
       - name: Check TTD public pages
+        if: ${{ !inputs.test_alert }}
         # A failed check is reported to the phone by the monitor itself, so don't fail the job.
         continue-on-error: true
         env:

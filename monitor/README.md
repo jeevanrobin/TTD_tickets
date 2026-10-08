@@ -50,8 +50,9 @@ keep coming when your PC is off.
 1. In the repository on GitHub: **Settings → Secrets and variables → Actions → New repository
    secret**. Name `TTD_NTFY_TOPIC`, value your ntfy topic. Never put the topic in a file: this
    repository is public.
-2. **Actions → TTD public monitor → Run workflow** to run a check now. The first run records the
-   baseline; later runs alert on changes.
+2. **Actions → TTD public monitor → Run workflow** to run a check now (tick "Only send a test
+   notification" to just test the phone). The first check records the baseline; later checks alert on
+   changes.
 3. The last seen text is kept between runs in the Actions cache. If the cache expires, the next run
    just records a new baseline.
 

@@ -67,6 +67,7 @@ VOLATILE_KEY = re.compile(r"(createdat|updatedat|publishedat|timestamp|response_
 TAG = re.compile(r"<[^>]+>")
 MIN_INTERVAL = 10
 MAX_BACKOFF_MINUTES = 240
+UNREACHABLE_AFTER = 3
 HERE = Path(__file__).resolve().parent
 STATE_FILE = HERE / "state" / "public_monitor.json"
 ALERT_LOG = HERE / "state" / "alerts.log"
@@ -232,12 +233,26 @@ def run_once(headed=False):
     for p in problems:
         print(f"[{stamp}] Problem: {p}")
 
+    blocked = any("HTTP 403" in p or "HTTP 429" in p for p in problems)
+    ok = bool(snapshot) and not blocked
+
+    # Tell the phone once when the sites stop answering (3 failed checks in a row), and once when they recover.
+    failures = 0 if ok else state.get("failures", 0) + 1
+    if failures == UNREACHABLE_AFTER:
+        push("TTD monitor: site unreachable", f"{failures} checks in a row failed. Last problems:\n" + "\n".join(problems[:5]))
+    elif ok and state.get("failures", 0) >= UNREACHABLE_AFTER:
+        push("TTD monitor: back to normal", "The TTD sites are answering again.")
+
     # Keep the last good text for sources that were not seen this time.
     merged = {**previous, **snapshot}
     digest = hashlib.sha256(json.dumps(merged, sort_keys=True).encode()).hexdigest()[:12]
-    save_state({"snapshot": merged, "last_check": datetime.now().isoformat(timespec="seconds"), "digest": digest})
-    blocked = any("HTTP 403" in p or "HTTP 429" in p for p in problems)
-    return bool(snapshot) and not blocked
+    save_state({
+        "snapshot": merged,
+        "last_check": datetime.now().isoformat(timespec="seconds"),
+        "digest": digest,
+        "failures": failures,
+    })
+    return ok
 
 
 def main():
@@ -256,10 +271,10 @@ def main():
             print("Set TTD_NTFY_TOPIC or pass --ntfy-topic first.")
             return 1
         push("TTD monitor test", "Phone alerts are working.")
-        print(f"Test notification sent to topic {ntfy_topic!r}.")
+        print("Test notification sent.")
         return 0
     if ntfy_topic:
-        print(f"Phone alerts on: ntfy topic {ntfy_topic!r}")
+        print("Phone alerts on.")
 
     if args.once:
         return 0 if run_once(args.headed) else 1

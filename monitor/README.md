@@ -30,17 +30,35 @@ git-ignored).
 
 1. Install the free **ntfy** app (Android: Play Store / F-Droid, iPhone: App Store). No account needed.
 2. In the app, tap **+** and subscribe to a topic name that nobody can guess, e.g.
-   `ttd-jeevan-7f3k9q2x`. Anyone who knows the name can read it, so keep it random.
+   `ttd-<your-name>-<random letters>`. Anyone who knows the name can read it, so keep it random.
 3. On the PC, send a test, then start the monitor with the same topic:
 
 ```powershell
-python public_monitor.py --ntfy-topic ttd-jeevan-7f3k9q2x --test-alert
-python public_monitor.py --ntfy-topic ttd-jeevan-7f3k9q2x
+python public_monitor.py --ntfy-topic <your-topic> --test-alert
+python public_monitor.py --ntfy-topic <your-topic>
 ```
 
-Or set it once: `setx TTD_NTFY_TOPIC ttd-jeevan-7f3k9q2x` (open a new terminal afterwards) and run
+Or set it once: `setx TTD_NTFY_TOPIC <your-topic>` (open a new terminal afterwards) and run
 `python public_monitor.py`. IMPORTANT changes arrive as high-priority notifications. Alert text is
 public TTD content only. The PC must stay on and running the monitor.
+
+## Run it in the cloud (GitHub Actions)
+
+`.github/workflows/ttd-monitor.yml` runs one check every 30 minutes on GitHub's servers, so alerts
+keep coming when your PC is off.
+
+1. In the repository on GitHub: **Settings → Secrets and variables → Actions → New repository
+   secret**. Name `TTD_NTFY_TOPIC`, value your ntfy topic. Never put the topic in a file: this
+   repository is public.
+2. **Actions → TTD public monitor → Run workflow** to run a check now. The first run records the
+   baseline; later runs alert on changes.
+3. The last seen text is kept between runs in the Actions cache. If the cache expires, the next run
+   just records a new baseline.
+
+Notes: GitHub may delay scheduled runs by several minutes at busy times, and pauses schedules in
+public repositories after 60 days without any commit (re-enable it on the Actions tab). If TTD stops
+answering GitHub's servers, you get one "site unreachable" notification after three failed checks,
+and one when it recovers.
 
 ## How it behaves
 

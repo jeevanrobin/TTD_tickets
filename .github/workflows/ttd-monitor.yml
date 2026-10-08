@@ -1,4 +1,5 @@
 name: TTD public monitor
+# Checks TTD's public pages and sends phone alerts; see monitor/README.md.
 
 on:
   schedule:

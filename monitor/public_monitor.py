@@ -33,7 +33,7 @@ import random
 import re
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -166,16 +166,23 @@ def save_state(state):
 # Phone notifications via ntfy (https://ntfy.sh): set TTD_NTFY_TOPIC or pass --ntfy-topic.
 NTFY_SERVER = os.environ.get("TTD_NTFY_SERVER", "https://ntfy.sh")
 ntfy_topic = os.environ.get("TTD_NTFY_TOPIC", "")
+# Send a quiet status notification about once an hour (TTD_HOURLY_SUMMARY=1 or --hourly-summary).
+hourly_summary = os.environ.get("TTD_HOURLY_SUMMARY", "") == "1"
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
-def push(title, message, important=False):
+def push(title, message, important=False, quiet=False):
     """Send a phone notification through ntfy. Failures are printed, never raised."""
     if not ntfy_topic:
         return
     req = urllib.request.Request(
         f"{NTFY_SERVER.rstrip('/')}/{ntfy_topic}",
         data=message[:3500].encode("utf-8"),
-        headers={"Title": title, "Priority": "high" if important else "default", "Tags": "warning" if important else "bell"},
+        headers={
+            "Title": title,
+            "Priority": "high" if important else ("low" if quiet else "default"),
+            "Tags": "warning" if important else ("clock" if quiet else "bell"),
+        },
         method="POST",
     )
     try:
@@ -199,12 +206,29 @@ def short(s, n=300):
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def send_summary(hour, snapshot, ok, problems):
+    """Push the hourly status: checks, changes, and the current booking-timer values."""
+    now_ist = datetime.now(IST).strftime("%d %b %H:%M IST")
+    lines = [
+        f"Checks this hour: {hour['ok']} of {hour['checks']} OK" + ("" if ok else f" (last check failed: {problems[0] if problems else 'no data'})"),
+        f"Announcement changes: {len(hour['changes'])}" + ("" if hour["changes"] else " (nothing new)"),
+        *[f"  {c}" for c in hour["changes"][-5:]],
+    ]
+    timer = [t for t in snapshot.get("Booking timer", []) if len(t) <= 80][:4]
+    if timer:
+        lines += ["Booking timer: " + "; ".join(timer)]
+    lines += ["Calendar colours (green/red/not released) need login, so they are not checked."]
+    push(f"TTD hourly status {now_ist}", "\n".join(lines), quiet=True)
+    print("Hourly status sent.")
+
+
 def run_once(headed=False):
     """Run one check. Returns True if the sites answered normally."""
     stamp = datetime.now().strftime("%H:%M:%S")
     snapshot, problems = check(headed)
     state = load_state()
     previous = state.get("snapshot", {})
+    changes = []
 
     if not previous:
         print(f"[{stamp}] Baseline recorded for {len(snapshot)} of {len(WATCHED)} sources.")
@@ -224,6 +248,7 @@ def run_once(headed=False):
             lines += [f"  - {short(s)}" for s in removed[:5]]
         if lines:
             alert(lines)
+            changes = [l for l in lines if not l.startswith("  ")]
         else:
             print(f"[{stamp}] No change ({len(snapshot)} sources checked).")
 
@@ -243,6 +268,15 @@ def run_once(headed=False):
     elif ok and state.get("failures", 0) >= UNREACHABLE_AFTER:
         push("TTD monitor: back to normal", "The TTD sites are answering again.")
 
+    # Hourly status message (when enabled): what was checked in the last hour and what changed.
+    hour = state.get("hour", {"start": datetime.now().isoformat(timespec="seconds"), "checks": 0, "ok": 0, "changes": []})
+    hour["checks"] += 1
+    hour["ok"] += int(ok)
+    hour["changes"] = (hour["changes"] + changes)[-10:]
+    if hourly_summary and datetime.now() - datetime.fromisoformat(hour["start"]) >= timedelta(minutes=55):
+        send_summary(hour, {**previous, **snapshot}, ok, problems)
+        hour = {"start": datetime.now().isoformat(timespec="seconds"), "checks": 0, "ok": 0, "changes": []}
+
     # Keep the last good text for sources that were not seen this time.
     merged = {**previous, **snapshot}
     digest = hashlib.sha256(json.dumps(merged, sort_keys=True).encode()).hexdigest()[:12]
@@ -254,6 +288,7 @@ def run_once(headed=False):
         "digest": digest,
         "failures": failures,
         "next_check_after": (datetime.now() + timedelta(minutes=backoff)).isoformat(timespec="seconds") if backoff else None,
+        "hour": hour,
     })
     return ok
 
@@ -265,10 +300,12 @@ def main():
     parser.add_argument("--headed", action="store_true", help="show the browser")
     parser.add_argument("--ntfy-topic", help="ntfy topic for phone alerts (or set TTD_NTFY_TOPIC)")
     parser.add_argument("--test-alert", action="store_true", help="send a test phone notification and exit")
+    parser.add_argument("--hourly-summary", action="store_true", help="also send a quiet status notification every hour")
     args = parser.parse_args()
 
-    global ntfy_topic
+    global ntfy_topic, hourly_summary
     ntfy_topic = args.ntfy_topic or ntfy_topic
+    hourly_summary = args.hourly_summary or hourly_summary
     if args.test_alert:
         if not ntfy_topic:
             print("Set TTD_NTFY_TOPIC or pass --ntfy-topic first.")

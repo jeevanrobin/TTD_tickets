@@ -62,6 +62,13 @@ answering GitHub's servers, you get one "site unreachable" notification after th
 and one when it recovers. After a failed check, later runs skip checking for 5, 10, 20 ... minutes (up
 to 4 hours) so a refusing site isn't hit every 5 minutes.
 
+## Hourly status
+
+With `--hourly-summary` (on in the GitHub workflow), a quiet, low-priority notification goes out about
+once an hour: how many checks succeeded, which announcements changed, and the booking-timer values.
+Calendar colours (available / full / not released) are only shown after OTP login, so the hourly
+status cannot include them.
+
 ## How it behaves
 
 - Each check opens the two official sites (portal home, and the legacy site's public pre-login

@@ -55,6 +55,7 @@ jobs:
         continue-on-error: true
         env:
           TTD_NTFY_TOPIC: ${{ secrets.TTD_NTFY_TOPIC }}
+          TTD_HOURLY_SUMMARY: "1"
         run: python monitor/public_monitor.py --once
 
       - name: Save state

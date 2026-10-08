@@ -2,7 +2,8 @@ name: TTD public monitor
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    # Every 5 minutes, GitHub's shortest schedule (runs can start a few minutes late when GitHub is busy).
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       test_alert:

@@ -44,7 +44,7 @@ public TTD content only. The PC must stay on and running the monitor.
 
 ## Run it in the cloud (GitHub Actions)
 
-`.github/workflows/ttd-monitor.yml` runs one check every 30 minutes on GitHub's servers, so alerts
+`.github/workflows/ttd-monitor.yml` runs one check every 5 minutes on GitHub's servers, so alerts
 keep coming when your PC is off.
 
 1. In the repository on GitHub: **Settings → Secrets and variables → Actions → New repository
@@ -56,10 +56,11 @@ keep coming when your PC is off.
 3. The last seen text is kept between runs in the Actions cache. If the cache expires, the next run
    just records a new baseline.
 
-Notes: GitHub may delay scheduled runs by several minutes at busy times, and pauses schedules in
+Notes: GitHub may delay or skip scheduled runs at busy times (5 minutes is its shortest schedule), and pauses schedules in
 public repositories after 60 days without any commit (re-enable it on the Actions tab). If TTD stops
 answering GitHub's servers, you get one "site unreachable" notification after three failed checks,
-and one when it recovers.
+and one when it recovers. After a failed check, later runs skip checking for 5, 10, 20 ... minutes (up
+to 4 hours) so a refusing site isn't hit every 5 minutes.
 
 ## How it behaves
 
@@ -67,7 +68,7 @@ and one when it recovers.
   timer page) in a fresh headless Chromium and lets the pages make their
   normal requests; it reads the responses the pages already fetch. It does not call TTD APIs directly,
   log in, click, fill forms, or keep cookies between checks.
-- Default interval 30 minutes with ±20% jitter; minimum 10 minutes.
+- Local loop: default interval 30 minutes with ±20% jitter; minimum 5 minutes.
 - If a watched response returns 403/429/5xx or nothing loads, the next check waits twice as long
   (up to 4 hours). It never retries quickly.
 - Timestamps and IDs (`updatedAt`, `publishedAt`, `id`, ...) are ignored so republishing the same

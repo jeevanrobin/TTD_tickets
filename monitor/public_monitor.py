@@ -20,7 +20,7 @@ cookies.
 Usage:
     python public_monitor.py --once          # one check (the first run just records a baseline)
     python public_monitor.py                 # check every 30 minutes until Ctrl-C
-    python public_monitor.py --interval 60   # every 60 minutes (minimum 10)
+    python public_monitor.py --interval 60   # every 60 minutes (minimum 5)
     python public_monitor.py --ntfy-topic <your-topic>   # also send alerts to your phone (ntfy app)
 """
 
@@ -33,7 +33,7 @@ import random
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -65,7 +65,7 @@ IMPORTANT = re.compile(
 # Keys whose values change on every publish and would cause false alerts.
 VOLATILE_KEY = re.compile(r"(createdat|updatedat|publishedat|timestamp|response_?time|servertime|^id$|hash|etag)", re.IGNORECASE)
 TAG = re.compile(r"<[^>]+>")
-MIN_INTERVAL = 10
+MIN_INTERVAL = 5
 MAX_BACKOFF_MINUTES = 240
 UNREACHABLE_AFTER = 3
 HERE = Path(__file__).resolve().parent
@@ -246,11 +246,14 @@ def run_once(headed=False):
     # Keep the last good text for sources that were not seen this time.
     merged = {**previous, **snapshot}
     digest = hashlib.sha256(json.dumps(merged, sort_keys=True).encode()).hexdigest()[:12]
+    # After a failure, wait 5, 10, 20 ... minutes (up to 4 hours) before the next scheduled check.
+    backoff = min(MIN_INTERVAL * 2 ** (failures - 1), MAX_BACKOFF_MINUTES) if failures else 0
     save_state({
         "snapshot": merged,
         "last_check": datetime.now().isoformat(timespec="seconds"),
         "digest": digest,
         "failures": failures,
+        "next_check_after": (datetime.now() + timedelta(minutes=backoff)).isoformat(timespec="seconds") if backoff else None,
     })
     return ok
 
@@ -277,6 +280,12 @@ def main():
         print("Phone alerts on.")
 
     if args.once:
+        # Scheduled runs (e.g. GitHub Actions) back off the same way as the loop: after failures,
+        # skip runs until the waiting time has passed instead of hitting the site on every schedule.
+        wait_until = load_state().get("next_check_after")
+        if wait_until and datetime.now() < datetime.fromisoformat(wait_until):
+            print(f"Backing off after failed checks; skipping until {wait_until}.")
+            return 0
         return 0 if run_once(args.headed) else 1
 
     interval = max(args.interval, MIN_INTERVAL)

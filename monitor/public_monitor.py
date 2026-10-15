@@ -12,8 +12,8 @@ visitor would, lets the pages make their own requests, and reads these responses
     tirupatibalaji.ap.gov.in   /content/Timer.json, /content/getLatestUpdates.json,
                                /common/getTimerProperties
 
-It compares the text in them with the previous check and prints what was added
-or removed. Text mentioning Special Entry Darshan, quota or release is marked
+It compares the text in them with the previous check and alerts on text it has not
+seen in the last 90 days (a switch back to an older copy of a page is ignored). Text mentioning Special Entry Darshan, quota or release is marked
 IMPORTANT. It never logs in, clicks, fills forms, calls APIs directly, or saves
 cookies.
 
@@ -68,6 +68,9 @@ TAG = re.compile(r"<[^>]+>")
 MIN_INTERVAL = 5
 MAX_BACKOFF_MINUTES = 240
 UNREACHABLE_AFTER = 3
+# Text seen within this many days is not new: the site sometimes briefly serves an older
+# copy of its announcements, and switching to it or back must not raise an alert.
+SEEN_DAYS = 90
 HERE = Path(__file__).resolve().parent
 STATE_FILE = HERE / "state" / "public_monitor.json"
 ALERT_LOG = HERE / "state" / "alerts.log"
@@ -222,12 +225,19 @@ def send_summary(hour, snapshot, ok, problems):
     print("Hourly status sent.")
 
 
+def text_key(s):
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
+
+
 def run_once(headed=False):
     """Run one check. Returns True if the sites answered normally."""
     stamp = datetime.now().strftime("%H:%M:%S")
     snapshot, problems = check(headed)
     state = load_state()
     previous = state.get("snapshot", {})
+    today = datetime.now().date().isoformat()
+    # {label: {text key: date last seen}}; seeded from the last snapshot on first use.
+    seen = state.get("seen") or {label: {text_key(t): today for t in texts_} for label, texts_ in previous.items()}
     changes = []
 
     if not previous:
@@ -242,15 +252,21 @@ def run_once(headed=False):
             added, removed = sorted(new - old), sorted(old - new)
             if not added and not removed:
                 continue
-            flag = "IMPORTANT " if any(IMPORTANT.search(s) for s in added) else ""
-            lines.append(f"{flag}{label}: {len(added)} added, {len(removed)} removed")
-            lines += [f"  + {short(s)}" for s in added[:15]]
+            known = seen.get(label, {})
+            fresh = [s for s in added if text_key(s) not in known]
+            if not fresh:
+                # Only removals, or a switch to text seen before (often a stale copy of the page).
+                print(f"[{stamp}] {label}: {len(added)} lines back from an earlier version, {len(removed)} removed; no alert.")
+                continue
+            flag = "IMPORTANT " if any(IMPORTANT.search(s) for s in fresh) else ""
+            lines.append(f"{flag}{label}: {len(fresh)} new, {len(removed)} removed")
+            lines += [f"  + {short(s)}" for s in fresh[:15]]
             lines += [f"  - {short(s)}" for s in removed[:5]]
         if lines:
             alert(lines)
             changes = [l for l in lines if not l.startswith("  ")]
         else:
-            print(f"[{stamp}] No change ({len(snapshot)} sources checked).")
+            print(f"[{stamp}] Nothing new ({len(snapshot)} sources checked).")
 
     missing = [label for label, _, _ in WATCHED if label not in snapshot]
     if missing:
@@ -282,8 +298,13 @@ def run_once(headed=False):
     digest = hashlib.sha256(json.dumps(merged, sort_keys=True).encode()).hexdigest()[:12]
     # After a failure, wait 5, 10, 20 ... minutes (up to 4 hours) before the next scheduled check.
     backoff = min(MIN_INTERVAL * 2 ** (failures - 1), MAX_BACKOFF_MINUTES) if failures else 0
+    for label, texts_ in snapshot.items():
+        seen.setdefault(label, {}).update({text_key(t): today for t in texts_})
+    cutoff = (datetime.now().date() - timedelta(days=SEEN_DAYS)).isoformat()
+    seen = {label: {k: d for k, d in keys.items() if d >= cutoff} for label, keys in seen.items()}
     save_state({
         "snapshot": merged,
+        "seen": seen,
         "last_check": datetime.now().isoformat(timespec="seconds"),
         "digest": digest,
         "failures": failures,

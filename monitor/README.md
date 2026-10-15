@@ -11,6 +11,10 @@ It alerts when their text changes, and marks changes that mention Special Entry 
 quota, release, slot or online booking as **IMPORTANT** (a quota-release announcement, a
 booking-window timer switching on).
 
+Only text it hasn't seen in the last 90 days counts as new. TTD sometimes briefly serves an older copy
+of its announcements; switching to that copy and back again doesn't raise an alert, and neither do
+announcements that are only removed.
+
 ## Run (on your own machine)
 
 ```bash

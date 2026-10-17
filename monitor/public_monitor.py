@@ -33,7 +33,7 @@ import random
 import re
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -180,7 +180,7 @@ def push(title, message, important=False, quiet=False):
         return
     req = urllib.request.Request(
         f"{NTFY_SERVER.rstrip('/')}/{ntfy_topic}",
-        data=message[:3500].encode("utf-8"),
+        data=message[:4000].encode("utf-8"),
         headers={
             "Title": title,
             "Priority": "high" if important else ("low" if quiet else "default"),
@@ -209,6 +209,50 @@ def short(s, n=300):
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+DATE = re.compile(r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{4})\b")
+TIME = re.compile(r"\b(\d{1,2}(?::\d{2})?\s*[AP]\.?M\.?)", re.IGNORECASE)
+
+
+def clock_minutes(t):
+    """Minutes after midnight for "3 PM", "10:00 A.M." and the like."""
+    m = re.match(r"(\d{1,2})(?::(\d{2}))?\s*([AP])", t.upper())
+    hour = int(m.group(1)) % 12 + (12 if m.group(3) == "P" else 0)
+    return hour * 60 + int(m.group(2) or 0)
+
+
+def latest_updates(snapshot, limit=25):
+    """Every announcement on the Latest Updates lists, trimmed to its subject.
+
+    Items with a date from today on come first, soonest first and prefixed with the date
+    (e.g. "24 Oct 10:00 AM: ..."); the rest follow as they are.
+    """
+    today = datetime.now(IST).date()
+    dated, other, seen = [], [], set()
+    for label in ("Latest updates", "Legacy latest updates"):
+        for text in snapshot.get(label, []):
+            # Skip short key=value leaves, links and bare greetings; announcements are sentences.
+            if len(text) < 40 or text.startswith(("http", "/", "<")):
+                continue
+            what = re.split(r"\s+(?:will be|w\.e\.f|is available|are available)", text, maxsplit=1, flags=re.IGNORECASE)[0]
+            what = short(re.sub(r"^(?:NEW\s*)?(?:Om Namo Venkatesaya\s*)?", "", what).strip(), 110)
+            if what.lower() in seen:
+                continue
+            seen.add(what.lower())
+            for m in DATE.finditer(text):
+                try:
+                    day = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+                except ValueError:
+                    continue
+                if day >= today:
+                    when = TIME.search(text[m.end():m.end() + 25])
+                    stamp = day.strftime("%d %b") + (f" {when.group(1).upper().replace('.', '')}" if when else "")
+                    dated.append(((day, clock_minutes(when.group(1)) if when else 0), f"  {stamp}: {what}"))
+                    break
+            else:
+                other.append(f"  {what}")
+    return ([line for _, line in sorted(dated)] + sorted(other))[:limit]
+
+
 def send_summary(hour, snapshot, ok, problems):
     """Push the hourly status: checks, changes, and the current booking-timer values."""
     now_ist = datetime.now(IST).strftime("%d %b %H:%M IST")
@@ -220,6 +264,9 @@ def send_summary(hour, snapshot, ok, problems):
     timer = [t for t in snapshot.get("Booking timer", []) if len(t) <= 80][:4]
     if timer:
         lines += ["Booking timer: " + "; ".join(timer)]
+    updates = latest_updates(snapshot)
+    if updates:
+        lines += [f"TTD Latest Updates ({len(updates)}):", *updates]
     lines += ["Calendar colours (green/red/not released) need login, so they are not checked."]
     push(f"TTD hourly status {now_ist}", "\n".join(lines), quiet=True)
     print("Hourly status sent.")

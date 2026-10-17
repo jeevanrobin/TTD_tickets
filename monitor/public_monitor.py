@@ -33,7 +33,7 @@ import random
 import re
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -209,6 +209,33 @@ def short(s, n=300):
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+DATE = re.compile(r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{4})\b")
+TIME = re.compile(r"\b(\d{1,2}(?::\d{2})?\s*[AP]\.?M\.?)", re.IGNORECASE)
+
+
+def upcoming(snapshot, limit=12):
+    """Dated announcements whose date is today or later, soonest first, e.g. "24 Oct 10:00 AM: ..."."""
+    today = datetime.now(IST).date()
+    found = {}
+    for label in ("Latest updates", "Legacy latest updates"):
+        for text in snapshot.get(label, []):
+            for m in DATE.finditer(text):
+                try:
+                    day = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+                except ValueError:
+                    continue
+                if day < today:
+                    continue
+                when = TIME.search(text[m.end():m.end() + 25])
+                what = re.split(r"\s+(?:will be|w\.e\.f|is available|are available)", text, maxsplit=1, flags=re.IGNORECASE)[0]
+                what = re.sub(r"^(?:NEW\s*)?(?:Om Namo Venkatesaya\s*)?", "", what).strip()
+                stamp = day.strftime("%d %b") + (f" {when.group(1).upper().replace('.', '')}" if when else "")
+                found.setdefault((day, short(what, 90)), stamp)
+                break
+    items = sorted(found.items())[:limit]
+    return [f"  {stamp}: {what}" for (_, what), stamp in items]
+
+
 def send_summary(hour, snapshot, ok, problems):
     """Push the hourly status: checks, changes, and the current booking-timer values."""
     now_ist = datetime.now(IST).strftime("%d %b %H:%M IST")
@@ -220,6 +247,9 @@ def send_summary(hour, snapshot, ok, problems):
     timer = [t for t in snapshot.get("Booking timer", []) if len(t) <= 80][:4]
     if timer:
         lines += ["Booking timer: " + "; ".join(timer)]
+    coming = upcoming(snapshot)
+    if coming:
+        lines += ["Upcoming on TTD's site:", *coming]
     lines += ["Calendar colours (green/red/not released) need login, so they are not checked."]
     push(f"TTD hourly status {now_ist}", "\n".join(lines), quiet=True)
     print("Hourly status sent.")

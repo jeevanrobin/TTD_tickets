@@ -69,7 +69,8 @@ to 4 hours) so a refusing site isn't hit every 5 minutes.
 ## Hourly status
 
 With `--hourly-summary` (on in the GitHub workflow), a quiet, low-priority notification goes out about
-once an hour: how many checks succeeded, which announcements changed, and the booking-timer values.
+once an hour: how many checks succeeded, which announcements changed, the booking-timer values, and
+the upcoming dated announcements (release dates from today on, soonest first, up to 12).
 Calendar colours (available / full / not released) are only shown after OTP login, so the hourly
 status cannot include them.
 

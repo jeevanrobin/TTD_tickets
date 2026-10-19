@@ -33,7 +33,7 @@ import random
 import re
 import sys
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -71,6 +71,8 @@ UNREACHABLE_AFTER = 3
 # Text seen within this many days is not new: the site sometimes briefly serves an older
 # copy of its announcements, and switching to it or back must not raise an alert.
 SEEN_DAYS = 90
+# The evening-before release reminder goes out at the first check within this many minutes after 8 PM IST.
+REMINDER_WINDOW = 60
 HERE = Path(__file__).resolve().parent
 STATE_FILE = HERE / "state" / "public_monitor.json"
 ALERT_LOG = HERE / "state" / "alerts.log"
@@ -252,11 +254,11 @@ def is_stale(text, today):
     return all(ym < (today.year, today.month) for ym in months)
 
 
-def latest_updates(snapshot, limit=25):
-    """The current announcements on the Latest Updates lists, trimmed to their subject.
+def announcements(snapshot):
+    """Parse the Latest Updates lists into (dated, undated).
 
-    Announcements with a release date from today on come first, soonest first and prefixed
-    with the date (e.g. "24 Oct 10:00 AM: ..."); undated ones follow. Announcements whose
+    dated: (day, minutes after midnight or None, "24 Oct 10:00 AM", subject) for release dates
+    from today on; undated: subjects of the other current announcements. Announcements whose
     dates and months are all in the past are left out.
     """
     today = datetime.now(IST).date()
@@ -285,10 +287,40 @@ def latest_updates(snapshot, limit=25):
             if day and day >= today:
                 when = TIME.search(plain[m.end():m.end() + 25])
                 stamp = day.strftime("%d %b") + (f" {clock(when.group(1))}" if when else "")
-                dated.append(((day, clock_minutes(when.group(1)) if when else 0), f"  {stamp}: {what}"))
+                dated.append((day, clock_minutes(when.group(1)) if when else None, stamp, what))
             else:
-                other.append(f"  {what}")
-    return ([line for _, line in sorted(dated)] + sorted(other))[:limit]
+                other.append(what)
+    dated.sort(key=lambda d: (d[0], d[1] or 0, d[3]))
+    return dated, sorted(other)
+
+
+def latest_updates(snapshot, limit=25):
+    """The current announcements as status lines: dated ones first, soonest first, then the rest."""
+    dated, other = announcements(snapshot)
+    return ([f"  {stamp}: {what}" for _, _, stamp, what in dated] + [f"  {what}" for what in other])[:limit]
+
+
+def send_reminders(snapshot, reminded):
+    """Loud reminders for listed releases: at 8 PM IST the evening before, and 15 minutes before
+    the release time. Each goes out once (tracked in `reminded`); returns the updated record."""
+    now = datetime.now(IST)
+    due = {}  # (title, when) -> lines
+    for day, minutes, stamp, what in announcements(snapshot)[0]:
+        # (kind, send at, send until): a check runs about every 5 minutes, so a late one still sends.
+        targets = [("tomorrow", datetime.combine(day - timedelta(days=1), dtime(20, 0), IST), timedelta(minutes=REMINDER_WINDOW))]
+        if minutes is not None:
+            opens = datetime.combine(day, dtime(minutes // 60, minutes % 60), IST)
+            targets.append(("soon", opens - timedelta(minutes=15), timedelta(minutes=15)))
+        for kind, at, window in targets:
+            key = f"{day.isoformat()} {kind} {what}"
+            if at <= now < at + window and key not in reminded:
+                due.setdefault(kind, []).append(f"{stamp}: {what}")
+                reminded[key] = day.isoformat()
+    for kind, lines in due.items():
+        push(f"TTD reminder: booking opens {kind}", "\n".join(lines + ["Book on ttdevasthanams.ap.gov.in; log in a few minutes early."]), important=True)
+        print(f"Reminder sent ({kind}): {len(lines)} release(s).")
+    cutoff = (now.date() - timedelta(days=2)).isoformat()
+    return {k: d for k, d in reminded.items() if d >= cutoff}
 
 
 def send_summary(hour, snapshot, ok, problems):
@@ -380,6 +412,7 @@ def run_once(headed=False):
 
     # Keep the last good text for sources that were not seen this time.
     merged = {**previous, **snapshot}
+    reminded = send_reminders(merged, state.get("reminded", {}))
     digest = hashlib.sha256(json.dumps(merged, sort_keys=True).encode()).hexdigest()[:12]
     # After a failure, wait 5, 10, 20 ... minutes (up to 4 hours) before the next scheduled check.
     backoff = min(MIN_INTERVAL * 2 ** (failures - 1), MAX_BACKOFF_MINUTES) if failures else 0
@@ -395,6 +428,7 @@ def run_once(headed=False):
         "failures": failures,
         "next_check_after": (datetime.now() + timedelta(minutes=backoff)).isoformat(timespec="seconds") if backoff else None,
         "hour": hour,
+        "reminded": reminded,
     })
     return ok
 

@@ -75,6 +75,13 @@ then undated ones; announcements whose dates and months are all past are left ou
 Calendar colours (available / full / not released) are only shown after OTP login, so the hourly
 status cannot include them.
 
+## Release reminders
+
+For every release date and time on TTD's Latest Updates (for example "Special Entry Darshan ...
+w.e.f. 24.10.2026, 10:00 AM"), a high-priority notification goes out at 8 PM IST the evening
+before and again 15 minutes before the release time. Releases at the same time share one
+notification, and each reminder is sent only once. Nothing is booked; it only reminds you.
+
 ## How it behaves
 
 - Each check opens the two official sites (portal home, and the legacy site's public pre-login

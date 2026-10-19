@@ -70,8 +70,8 @@ to 4 hours) so a refusing site isn't hit every 5 minutes.
 
 With `--hourly-summary` (on in the GitHub workflow), a quiet, low-priority notification goes out about
 once an hour: how many checks succeeded, which announcements changed, the booking-timer values, and
-every announcement currently on TTD's Latest Updates (dated ones from today on first, soonest first,
-then the rest; up to 25).
+the current announcements on TTD's Latest Updates (dated ones from today on first, soonest first,
+then undated ones; announcements whose dates and months are all past are left out; up to 25).
 Calendar colours (available / full / not released) are only shown after OTP login, so the hourly
 status cannot include them.
 

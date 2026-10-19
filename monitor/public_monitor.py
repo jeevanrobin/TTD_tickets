@@ -209,45 +209,83 @@ def short(s, n=300):
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-DATE = re.compile(r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{4})\b")
-TIME = re.compile(r"\b(\d{1,2}(?::\d{2})?\s*[AP]\.?M\.?)", re.IGNORECASE)
+DATE = re.compile(r"\b(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{4})\b")
+TIME = re.compile(r"\b(\d{1,2}(?:[:.]\d{2})?\s*[AP]\.?M\.?)", re.IGNORECASE)
+# The release date of an announcement: the date after "w.e.f." or "on" ("released at 3 PM on 28.9.2026").
+RELEASE = re.compile(r"(?:w\.?\s*e\.?\s*f\.?|\bon)\s*[,:]?\s*(?:the\s*)?" + DATE.pattern, re.IGNORECASE)
+MONTH_YEAR = re.compile(
+    r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*[-–,]?\s*(\d{4})\b", re.IGNORECASE
+)
+MONTHS = "jan feb mar apr may jun jul aug sep oct nov dec".split()
+
+
+def clock(t):
+    """Normalise "10.00 a.m." to "10:00 AM"."""
+    t = re.sub(r"(\d)\.(\d{2})", r"\1:\2", t.upper())
+    return re.sub(r"\s*([AP])\.?M\.?", r" \1M", t.replace(" ", ""))
 
 
 def clock_minutes(t):
-    """Minutes after midnight for "3 PM", "10:00 A.M." and the like."""
-    m = re.match(r"(\d{1,2})(?::(\d{2}))?\s*([AP])", t.upper())
+    """Minutes after midnight for "3 PM", "10:00 AM" and the like."""
+    m = re.match(r"(\d{1,2})(?::(\d{2}))?\s*([AP])", clock(t))
     hour = int(m.group(1)) % 12 + (12 if m.group(3) == "P" else 0)
     return hour * 60 + int(m.group(2) or 0)
 
 
-def latest_updates(snapshot, limit=25):
-    """Every announcement on the Latest Updates lists, trimmed to its subject.
+def is_stale(text, today):
+    """True when every date and month the text names is already over (e.g. "August - 2026" quotas).
 
-    Items with a date from today on come first, soonest first and prefixed with the date
-    (e.g. "24 Oct 10:00 AM: ..."); the rest follow as they are.
+    Months count only when no full date is given ("for November 2026, released on 28.9.2026"
+    is over once 28.9.2026 has passed).
+    """
+    days = []
+    for m in DATE.finditer(text):
+        try:
+            days.append(date(int(m.group(3)), int(m.group(2)), int(m.group(1))))
+        except ValueError:
+            pass
+    months = [(int(y), MONTHS.index(mon[:3].lower()) + 1) for mon, y in MONTH_YEAR.findall(text)]
+    if not days and not months:
+        return False
+    if days:
+        return all(d < today for d in days)
+    return all(ym < (today.year, today.month) for ym in months)
+
+
+def latest_updates(snapshot, limit=25):
+    """The current announcements on the Latest Updates lists, trimmed to their subject.
+
+    Announcements with a release date from today on come first, soonest first and prefixed
+    with the date (e.g. "24 Oct 10:00 AM: ..."); undated ones follow. Announcements whose
+    dates and months are all in the past are left out.
     """
     today = datetime.now(IST).date()
     dated, other, seen = [], [], set()
     for label in ("Latest updates", "Legacy latest updates"):
         for text in snapshot.get(label, []):
+            # Some entries are HTML-escaped twice ("&amp;amp;"); clean them for display only.
+            text = re.sub(r"\s+", " ", html.unescape(html.unescape(text))).strip()
             # Skip short key=value leaves, links and bare greetings; announcements are sentences.
-            if len(text) < 40 or text.startswith(("http", "/", "<")):
+            if len(text) < 40 or text.startswith(("http", "/", "<")) or is_stale(text, today):
                 continue
             what = re.split(r"\s+(?:will be|w\.e\.f|is available|are available)", text, maxsplit=1, flags=re.IGNORECASE)[0]
             what = short(re.sub(r"^(?:NEW\s*)?(?:Om Namo Venkatesaya\s*)?", "", what).strip(), 110)
             if what.lower() in seen:
                 continue
             seen.add(what.lower())
-            for m in DATE.finditer(text):
+            # Dates inside brackets are exceptions ("except darshan from ... to ..."), not the release date.
+            plain = re.sub(r"\([^)]*\)", " ", text)
+            m = RELEASE.search(plain)
+            day = None
+            if m:
                 try:
                     day = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
                 except ValueError:
-                    continue
-                if day >= today:
-                    when = TIME.search(text[m.end():m.end() + 25])
-                    stamp = day.strftime("%d %b") + (f" {when.group(1).upper().replace('.', '')}" if when else "")
-                    dated.append(((day, clock_minutes(when.group(1)) if when else 0), f"  {stamp}: {what}"))
-                    break
+                    pass
+            if day and day >= today:
+                when = TIME.search(plain[m.end():m.end() + 25])
+                stamp = day.strftime("%d %b") + (f" {clock(when.group(1))}" if when else "")
+                dated.append(((day, clock_minutes(when.group(1)) if when else 0), f"  {stamp}: {what}"))
             else:
                 other.append(f"  {what}")
     return ([line for _, line in sorted(dated)] + sorted(other))[:limit]

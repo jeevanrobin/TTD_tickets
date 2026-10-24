@@ -219,6 +219,12 @@ MONTH_YEAR = re.compile(
     r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*[-–,]?\s*(\d{4})\b", re.IGNORECASE
 )
 MONTHS = "jan feb mar apr may jun jul aug sep oct nov dec".split()
+# Lucky dip posts give a registration window ("from 18.10.2026 10:00 AM to 20.10.2026 10:00 AM")
+# and sometimes a payment deadline for winners; each date gets its own reminder.
+DIP = re.compile(r"\b(?:lucky|electronic|e-)\s*dip\b|\bdip\b", re.IGNORECASE)
+PAY = re.compile(r"\bpa(?:y|id|yment)\b", re.IGNORECASE)
+# Reminder lead time before each event: openings are a race, closings and payments just a deadline.
+LEAD = {"opens": 15, "dip opens": 15, "closes": 120, "payment due": 120}
 
 
 def clock(t):
@@ -254,12 +260,43 @@ def is_stale(text, today):
     return all(ym < (today.year, today.month) for ym in months)
 
 
+def time_near(text, start, end):
+    """The time written just after a date ("18.10.2026 at 10:00 AM") or else just before it."""
+    after = TIME.search(text[end:end + 25])
+    if after:
+        return after.group(1)
+    before = TIME.findall(text[max(0, start - 25):start])
+    return before[-1] if before else None
+
+
+def dip_events(plain):
+    """(day, time or None, event) for a lucky dip post: registration opens at the first date,
+    closes at the last, and a date right after "pay"/"payment" is the winners' payment deadline."""
+    found = []
+    for m in DATE.finditer(plain):
+        try:
+            day = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            continue
+        found.append((day, time_near(plain, m.start(), m.end()), bool(PAY.search(plain[max(0, m.start() - 40):m.start()]))))
+    # Registration windows last days, not months; later dates are the seva dates themselves.
+    window = [f for f in found if not f[2]]
+    window = [f for f in window if (f[0] - window[0][0]).days <= 10]
+    events = [(d, t, "payment due") for d, t, paid in found if paid]
+    if window:
+        events.append((window[0][0], window[0][1], "dip opens"))
+        if (window[-1][0], window[-1][1]) != (window[0][0], window[0][1]):
+            events.append((window[-1][0], window[-1][1], "closes"))
+    return events
+
+
 def announcements(snapshot):
     """Parse the Latest Updates lists into (dated, undated).
 
-    dated: (day, minutes after midnight or None, "24 Oct 10:00 AM", subject) for release dates
-    from today on; undated: subjects of the other current announcements. Announcements whose
-    dates and months are all in the past are left out.
+    dated: (day, minutes after midnight or None, "24 Oct 10:00 AM", subject, event) for release
+    dates from today on; event is "opens", or for lucky dips "dip opens", "closes" or "payment due".
+    undated: subjects of the other current announcements. Announcements whose dates and months
+    are all in the past are left out.
     """
     today = datetime.now(IST).date()
     dated, other, seen = [], [], set()
@@ -277,18 +314,24 @@ def announcements(snapshot):
             seen.add(what.lower())
             # Dates inside brackets are exceptions ("except darshan from ... to ..."), not the release date.
             plain = re.sub(r"\([^)]*\)", " ", text)
-            m = RELEASE.search(plain)
-            day = None
-            if m:
-                try:
-                    day = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-                except ValueError:
-                    pass
-            if day and day >= today:
-                when = TIME.search(plain[m.end():m.end() + 25])
-                stamp = day.strftime("%d %b") + (f" {clock(when.group(1))}" if when else "")
-                dated.append((day, clock_minutes(when.group(1)) if when else None, stamp, what))
+            if DIP.search(plain):
+                events = dip_events(plain)
             else:
+                events = []
+                m = RELEASE.search(plain)
+                if m:
+                    try:
+                        day = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+                        when = TIME.search(plain[m.end():m.end() + 25])
+                        events = [(day, when.group(1) if when else None, "opens")]
+                    except ValueError:
+                        pass
+            events = [e for e in events if e[0] >= today]
+            for day, when, event in events:
+                stamp = day.strftime("%d %b") + (f" {clock(when)}" if when else "")
+                label = what if event in ("opens", "dip opens") else f"{what} ({event})"
+                dated.append((day, clock_minutes(when) if when else None, stamp, label, event))
+            if not events:
                 other.append(what)
     dated.sort(key=lambda d: (d[0], d[1] or 0, d[3]))
     return dated, sorted(other)
@@ -297,28 +340,38 @@ def announcements(snapshot):
 def latest_updates(snapshot, limit=25):
     """The current announcements as status lines: dated ones first, soonest first, then the rest."""
     dated, other = announcements(snapshot)
-    return ([f"  {stamp}: {what}" for _, _, stamp, what in dated] + [f"  {what}" for what in other])[:limit]
+    return ([f"  {stamp}: {what}" for _, _, stamp, what, _ in dated] + [f"  {what}" for what in other])[:limit]
 
 
 def send_reminders(snapshot, reminded):
-    """Loud reminders for listed releases: at 8 PM IST the evening before, and 15 minutes before
-    the release time. Each goes out once (tracked in `reminded`); returns the updated record."""
+    """Loud reminders for listed releases: at 8 PM IST the evening before, and shortly before the
+    time (15 minutes before an opening, 2 hours before a lucky dip closes or its payment is due).
+    Each goes out once (tracked in `reminded`); returns the updated record."""
     now = datetime.now(IST)
-    due = {}  # (title, when) -> lines
-    for day, minutes, stamp, what in announcements(snapshot)[0]:
+    due = {}  # (event, kind) -> lines
+    for day, minutes, stamp, what, event in announcements(snapshot)[0]:
         # (kind, send at, send until): a check runs about every 5 minutes, so a late one still sends.
         targets = [("tomorrow", datetime.combine(day - timedelta(days=1), dtime(20, 0), IST), timedelta(minutes=REMINDER_WINDOW))]
         if minutes is not None:
-            opens = datetime.combine(day, dtime(minutes // 60, minutes % 60), IST)
-            targets.append(("soon", opens - timedelta(minutes=15), timedelta(minutes=15)))
+            at = datetime.combine(day, dtime(minutes // 60, minutes % 60), IST)
+            lead = timedelta(minutes=LEAD[event])
+            targets.append(("soon" if LEAD[event] <= 15 else "in 2 hours", at - lead, lead))
         for kind, at, window in targets:
             key = f"{day.isoformat()} {kind} {what}"
             if at <= now < at + window and key not in reminded:
-                due.setdefault(kind, []).append(f"{stamp}: {what}")
+                due.setdefault((event, kind), []).append(f"{stamp}: {what}")
                 reminded[key] = day.isoformat()
-    for kind, lines in due.items():
-        push(f"TTD reminder: booking opens {kind}", "\n".join(lines + ["Book on ttdevasthanams.ap.gov.in; log in a few minutes early."]), important=True)
-        print(f"Reminder sent ({kind}): {len(lines)} release(s).")
+    for (event, kind), lines in due.items():
+        if event == "opens":
+            title, tip = f"TTD reminder: booking opens {kind}", "Book on ttdevasthanams.ap.gov.in; log in a few minutes early."
+        elif event == "dip opens":
+            title, tip = f"TTD reminder: lucky dip registration opens {kind}", "Register on ttdevasthanams.ap.gov.in; it is a draw, so any time before it closes counts."
+        elif event == "closes":
+            title, tip = f"TTD reminder: lucky dip registration closes {kind}", "Register on ttdevasthanams.ap.gov.in before it closes."
+        else:
+            title, tip = f"TTD reminder: lucky dip payment due {kind}", "If you won the dip, pay on ttdevasthanams.ap.gov.in before the deadline."
+        push(title, "\n".join(lines + [tip]), important=True)
+        print(f"Reminder sent ({event}, {kind}): {len(lines)} item(s).")
     cutoff = (now.date() - timedelta(days=2)).isoformat()
     return {k: d for k, d in reminded.items() if d >= cutoff}
 

@@ -82,6 +82,11 @@ w.e.f. 24.10.2026, 10:00 AM"), a high-priority notification goes out at 8 PM IST
 before and again 15 minutes before the release time. Releases at the same time share one
 notification, and each reminder is sent only once. Nothing is booked; it only reminds you.
 
+Lucky dip posts (Arjitha Seva electronic dip) get their own reminders: when registration opens,
+when it closes (8 PM the evening before and 2 hours before), and, if the post gives one, the
+winners' payment deadline (same timing). The dip is a draw, so registering late in the window is
+as good as registering first.
+
 ## How it behaves
 
 - Each check opens the two official sites (portal home, and the legacy site's public pre-login
